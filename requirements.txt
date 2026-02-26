@@ -1,0 +1,22 @@
+# Core AI and Logic
+langchain>=1.2.0
+langchain-community>=0.3.0
+langchain-google-genai>=4.2.0
+
+# Financial Data & APIs
+yfinance>=0.2.50
+alpaca-py>=0.30.0
+pandas>=2.2.0
+requests>=2.32.0
+httpx>=0.28.0
+
+# Telegram Bot
+python-telegram-bot[job-queue]>=22.0
+
+# Dashboard & Visualization
+streamlit>=1.40.0
+plotly>=6.0.0
+
+# Utility
+python-dotenv>=1.0.1
+aiohttp>=3.10.0
