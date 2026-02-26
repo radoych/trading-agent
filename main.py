@@ -25,7 +25,6 @@ async def start_web_server():
 
 # --- TRADING LOOP ---
 async def trading_loop(bot):
-    # Add your favorite symbols here
     symbols = ["AAPL", "NVDA", "TSLA"] 
     
     while True:
@@ -34,20 +33,31 @@ async def trading_loop(bot):
                 print(f"📡 Scanning {symbol}...")
                 ticker = yf.Ticker(symbol)
                 
-                # Safety check for price
+                # 1. Safety check for price
                 fast_info = ticker.fast_info
-                if not hasattr(fast_info, 'last_price'):
-                    print(f"⚠️ Could not get price for {symbol}")
+                if fast_info is None or not hasattr(fast_info, 'last_price'):
+                    print(f"⚠️ Price data missing for {symbol}. Skipping...")
                     continue
-                    
                 price = fast_info.last_price
+
+                # 2. Safety check for news (This fixes the 'NoneType' error)
+                raw_news = ticker.news
+                news = []
                 
-                # Get latest 3 news titles for more context
-                news = [n['content']['title'] for n in ticker.news[:3]]
+                if raw_news: # Check if raw_news is not None and not empty
+                    for n in raw_news[:3]:
+                        # Use .get() to avoid errors if 'content' or 'title' is missing
+                        content = n.get('content', {})
+                        if content:
+                            title = content.get('title')
+                            if title:
+                                news.append(title)
                 
-                # Ask Gemini (This will automatically use your key rotator)
+                if not news:
+                    print(f"ℹ️ No news found for {symbol}, proceeding with price only.")
+
+                # 3. Ask Gemini
                 decision = get_decision(symbol, price, news)
-                
                 print(f"🤖 Gemini {symbol} Decision: {decision['action']}")
                 
                 if decision['action'] in ["BUY", "SELL"]:
@@ -58,15 +68,12 @@ async def trading_loop(bot):
                         reason=decision['reason']
                     )
                 
-                # Small 10-second gap between symbols to avoid hitting "Per Minute" limits
-                await asyncio.sleep(10)
+                await asyncio.sleep(10) # Gap between symbols
 
             except Exception as e:
                 print(f"⚠️ Error scanning {symbol}: {e}")
-                await asyncio.sleep(30) # Wait a bit if there's a specific symbol error
+                await asyncio.sleep(10)
         
-        # Wait 10 minutes before starting the next full round of scans
-        # With 3 symbols, this uses ~432 requests/day (Well within your 750 limit)
         print("😴 Round finished. Sleeping for 10 minutes...")
         await asyncio.sleep(600)
 
