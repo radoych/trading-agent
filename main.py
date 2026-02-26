@@ -25,27 +25,50 @@ async def start_web_server():
 
 # --- TRADING LOOP ---
 async def trading_loop(bot):
-    symbol = "AAPL"
+    # Add your favorite symbols here
+    symbols = ["AAPL", "NVDA", "TSLA"] 
+    
     while True:
-        try:
-            print(f"📡 Scanning {symbol}...")
-            ticker = yf.Ticker(symbol)
-            price = ticker.fast_info.last_price
-            news = [n['content']['title'] for n in ticker.news[:2]]
-            
-            decision = get_decision(symbol, price, news)
-            
-            if decision['action'] in ["BUY", "SELL"]:
-                await bot.send_approval_request(
-                    symbol=symbol, 
-                    action=decision['action'], 
-                    price=round(price, 2), 
-                    reason=decision['reason']
-                )
-        except Exception as e:
-            print(f"⚠️ Loop Error: {e}")
-            
-        await asyncio.sleep(360) # 6 min sleep
+        for symbol in symbols:
+            try:
+                print(f"📡 Scanning {symbol}...")
+                ticker = yf.Ticker(symbol)
+                
+                # Safety check for price
+                fast_info = ticker.fast_info
+                if not hasattr(fast_info, 'last_price'):
+                    print(f"⚠️ Could not get price for {symbol}")
+                    continue
+                    
+                price = fast_info.last_price
+                
+                # Get latest 3 news titles for more context
+                news = [n['content']['title'] for n in ticker.news[:3]]
+                
+                # Ask Gemini (This will automatically use your key rotator)
+                decision = get_decision(symbol, price, news)
+                
+                print(f"🤖 Gemini {symbol} Decision: {decision['action']}")
+                
+                if decision['action'] in ["BUY", "SELL"]:
+                    await bot.send_approval_request(
+                        symbol=symbol, 
+                        action=decision['action'], 
+                        price=round(price, 2), 
+                        reason=decision['reason']
+                    )
+                
+                # Small 10-second gap between symbols to avoid hitting "Per Minute" limits
+                await asyncio.sleep(10)
+
+            except Exception as e:
+                print(f"⚠️ Error scanning {symbol}: {e}")
+                await asyncio.sleep(30) # Wait a bit if there's a specific symbol error
+        
+        # Wait 10 minutes before starting the next full round of scans
+        # With 3 symbols, this uses ~432 requests/day (Well within your 750 limit)
+        print("😴 Round finished. Sleeping for 10 minutes...")
+        await asyncio.sleep(600)
 
 # --- MAIN ENTRY ---
 async def main():
