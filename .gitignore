@@ -2,5 +2,3 @@
 __pycache__/
 *.pyc
 trade_logs.json
-test_setup.py
-tests/
