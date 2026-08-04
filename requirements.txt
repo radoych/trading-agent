@@ -9,6 +9,8 @@ google-api-core>=2.20.0
 yfinance>=0.2.50
 alpaca-py>=0.30.0
 pandas>=2.2.0
+# scripts/latency_decay.py imports numpy directly rather than via pandas.
+numpy>=1.26.0
 requests>=2.32.0
 
 # Telegram Bot
