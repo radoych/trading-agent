@@ -1,14 +1,15 @@
 # Core AI and Logic
-langchain>=1.2.0
-langchain-community>=0.3.0
 langchain-google-genai>=4.2.0
+langchain-core>=0.3.0
+# brain.py catches ResourceExhausted/TooManyRequests from google.api_core.
+# It is only a transitive dependency, so pin it explicitly or imports fail.
+google-api-core>=2.20.0
 
 # Financial Data & APIs
 yfinance>=0.2.50
 alpaca-py>=0.30.0
 pandas>=2.2.0
 requests>=2.32.0
-httpx>=0.28.0
 
 # Telegram Bot
 python-telegram-bot[job-queue]>=22.0
