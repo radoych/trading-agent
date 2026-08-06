@@ -11,20 +11,54 @@ import risk
 
 
 class DummyPosition:
-    def __init__(self, quantity):
-        self.quantity = quantity
+    def __init__(self, qty):
+        self.qty = qty
 
 
 class DummyClient:
     def __init__(self, positions):
-        # positions is a dict ticker->quantity or will raise
+        # positions is a dict ticker->qty or will raise
         self._positions = positions
 
-    def get_open_positions(self, ticker):
+    def get_open_position(self, ticker):
         if ticker not in self._positions:
             raise Exception("no position")
-        qty = self._positions[ticker]
-        return DummyPosition(qty)
+        return DummyPosition(self._positions[ticker])
+
+
+def test_check_current_holdings_matches_real_alpaca_api():
+    """Contract test against the real client, not a hand-written stub.
+
+    The stub above used to define `get_open_positions` and `.quantity`, which
+    matched risk.py but matched nothing in alpaca-py. The tests passed while the
+    function returned False in production for every ticker. autospec fails on any
+    call to a method the real client does not have.
+    """
+    from unittest.mock import create_autospec
+
+    from alpaca.trading.client import TradingClient
+    from alpaca.trading.models import Position
+
+    assert "qty" in Position.model_fields
+    assert "quantity" not in Position.model_fields
+
+    client = create_autospec(TradingClient, instance=True)
+    client.get_open_position.return_value = DummyPosition("5")
+    assert risk.check_current_holdings(client, "AAPL") is True
+    client.get_open_position.assert_called_once_with("AAPL")
+
+
+@pytest.mark.parametrize("action,price,balance,expected", [
+    ("BUY", 50.0, 10_000.0, True),     # 50 <= 10% of 10k
+    ("BUY", 1_500.0, 10_000.0, False),  # 1500 > 10% of 10k
+    ("BUY", 1_000.0, 10_000.0, True),   # exactly at the cap
+    ("SELL", 9_999.0, 10_000.0, True),  # cap only applies to BUY
+    ("HOLD", 9_999.0, 10_000.0, True),
+])
+def test_check_risk(action, price, balance, expected):
+    ok, reason = risk.check_risk(action, price, balance)
+    assert ok is expected
+    assert isinstance(reason, str) and reason
 
 
 @pytest.mark.parametrize("qty,expected", [(0, False), (1, True), (100, True)])

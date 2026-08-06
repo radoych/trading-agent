@@ -12,12 +12,17 @@ def check_risk(action, price, balance):
 
 
 def check_current_holdings(client, ticker):
-    """Return True if there is an open position for `ticker` (qty > 0)."""
+    """Return True if there is an open position for `ticker` (qty > 0).
+
+    alpaca-py exposes `get_open_position` (singular) and the Position model
+    field is `qty`, not `quantity`. Both were wrong here, and the bare except
+    swallowed the resulting AttributeError so this always returned False.
+    """
     try:
-        pos = client.get_open_positions(ticker)
-        return bool(getattr(pos, "quantity", 0))
+        pos = client.get_open_position(ticker)
     except Exception:
         return False
+    return float(getattr(pos, "qty", 0) or 0) > 0
 
 
 def log_event(ticker, action, price, sentiment, news, params=None):
