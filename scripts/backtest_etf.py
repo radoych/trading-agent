@@ -1,6 +1,6 @@
 """Backtest the ETF proposal engine, so the risk posture is chosen from numbers.
 
-Strategy skeleton, rebalanced monthly:
+Strategy skeleton:
 
   1. Trend gate    - an ETF is only eligible if it closes above its 200-day SMA.
                      This is the single most reliable drawdown reducer available
@@ -10,12 +10,24 @@ Strategy skeleton, rebalanced monthly:
 
 Variants:
   core         - 6 uncorrelated assets, 3 slots, plain 12m+6m momentum, equal
-                 weighted. THIS IS THE ONE THAT WORKS. Beats SPY on Sharpe
-                 (1.00 vs 0.87) and Calmar (0.72 vs 0.44) with roughly half the
-                 drawdown, and holds up in both halves of the sample.
-  preservation - wide universe, 3 slots, also requires positive 12m absolute
-                 momentum, inverse-volatility weighted.
-  growth       - wide universe, 5 slots, trend gate only, equal weighted.
+                 weighted, evaluated WEEKLY with a hysteresis buffer of 2.
+                 THIS IS THE ONE THAT WORKS: Sharpe 1.04 vs SPY's 0.87 and
+                 Calmar 0.90 vs 0.44, with under half the drawdown.
+  preservation - wide universe, 3 slots, monthly, also requires positive 12m
+                 absolute momentum, inverse-volatility weighted.
+  growth       - wide universe, 5 slots, monthly, trend gate only, equal weighted.
+
+On weekly vs monthly, measured rather than assumed:
+
+  monthly            CAGR 13.1%  MaxDD -18.1%  Sharpe 1.00  Calmar 0.72  11 trades/yr
+  weekly             CAGR 14.1%  MaxDD -15.2%  Sharpe 1.10  Calmar 0.92  22 trades/yr
+  weekly + buffer 2  CAGR 13.3%  MaxDD -14.8%  Sharpe 1.04  Calmar 0.90  12 trades/yr
+
+Weekly beats monthly on every metric because a broken trend is acted on within
+days instead of waiting for month end. The buffer then recovers most of the
+turnover: an incumbent is only sold once it leaves the top 5 of 6, rather than
+the first week it slips to fourth. That is weekly responsiveness at monthly
+trade frequency, which is why it is the default.
 
 Both wide-universe variants LOSE to buy-and-hold. They are retained because the
 comparison is the point: 27 correlated sector ETFs plus a volatility penalty
@@ -65,6 +77,7 @@ RISK_UNIVERSE = WIDE_UNIVERSE
 UNIVERSE = sorted(set(WIDE_UNIVERSE + CORE_UNIVERSE + [CASH]))
 
 TREND_DAYS = 200
+CORE_BUFFER = 2         # hysteresis band for the core variant
 MOM_LONG, MOM_SHORT, VOL_DAYS = 252, 126, 63
 COST_BPS = 5.0          # one-way, charged on turnover
 TRADING_DAYS = 252
@@ -88,24 +101,39 @@ def zscore(s):
     return (s - s.mean()) / sd if sd and np.isfinite(sd) else s * 0.0
 
 
-def build_weights(closes, variant, first_date):
-    """Target weights on each monthly rebalance date."""
+def build_weights(closes, variant, first_date, freq=None, buffer=None):
+    """Target weights on each rebalance date.
+
+    freq   - "W" weekly or "M" monthly. Weekly reacts to a broken trend within
+             days instead of waiting for month end, which is where most of the
+             drawdown improvement comes from.
+    buffer - hysteresis band. An existing holding is kept while it stays inside
+             the top (n_slots + buffer) by rank, instead of being sold the first
+             week it slips to fourth. Halves turnover for almost no give-up.
+    """
     if variant == "core":
         pool, n_slots = CORE_UNIVERSE, 3
+        freq = freq or "W"
+        buffer = CORE_BUFFER if buffer is None else buffer
     else:
         pool, n_slots = RISK_UNIVERSE, (3 if variant == "preservation" else 5)
+        freq = freq or "M"
+        buffer = buffer or 0
     rets = closes.pct_change()
     sma = closes.rolling(TREND_DAYS).mean()
     vol = rets.rolling(VOL_DAYS).std() * np.sqrt(TRADING_DAYS)
     mom_l = closes / closes.shift(MOM_LONG) - 1
     mom_s = closes / closes.shift(MOM_SHORT) - 1
 
-    # Last trading day of each month
-    rebal = closes.index.to_series().groupby(
-        [closes.index.year, closes.index.month]).last()
+    idx = closes.index.to_series()
+    if freq == "W":
+        iso = closes.index.isocalendar()
+        rebal = idx.groupby([iso.year, iso.week]).last()
+    else:
+        rebal = idx.groupby([closes.index.year, closes.index.month]).last()
     rebal = [d for d in rebal if d >= first_date]
 
-    rows = {}
+    rows, held = {}, []
     for d in rebal:
         elig = []
         for sym in pool:
@@ -128,12 +156,27 @@ def build_weights(closes, variant, first_date):
                 score = (0.5 * zscore(mom_l.loc[d, elig])
                          + 0.5 * zscore(mom_s.loc[d, elig])
                          - 0.5 * zscore(vol.loc[d, elig]))
-            picks = score.sort_values(ascending=False).head(n_slots).index.tolist()
+            ranked = score.sort_values(ascending=False)
+            if buffer:
+                rank = {s: i for i, s in enumerate(ranked.index)}
+                # Incumbents survive while they stay inside the widened band.
+                picks = [s for s in held if rank.get(s, 99) < n_slots + buffer][:n_slots]
+                for s in ranked.index:
+                    if len(picks) >= n_slots:
+                        break
+                    if s not in picks:
+                        picks.append(s)
+            else:
+                picks = ranked.head(n_slots).index.tolist()
+
             if variant == "preservation":
                 inv = 1.0 / vol.loc[d, picks]
                 w[picks] = (inv / inv.sum()) * (len(picks) / n_slots)
             else:
                 w[picks] = 1.0 / n_slots
+            held = picks
+        else:
+            held = []
         w[CASH] = max(0.0, 1.0 - w.sum())
         rows[d] = w
     return pd.DataFrame(rows).T
